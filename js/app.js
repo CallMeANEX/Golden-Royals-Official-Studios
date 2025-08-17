@@ -58,15 +58,55 @@ document.getElementById('save-settings').addEventListener('click', () => {
   alert('Settings saved');
 });
 
-// Fake API stub
-async function fakeApiCall(tool, payload) {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      switch (tool) {
-        case 'chat': resolve(`Echo: ${payload}`); break;
-        case 'generateImage': resolve('https://via.placeholder.com/512'); break;
-        case 'make3DModel': resolve({ vertices: [], faces: [] }); break;
-      }
-    }, 1000);
+// Remove fakeApiCall entirely and add:
+
+async function callChatAPI(message) {
+  const res = await fetch('http://localhost:4000/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ message })
   });
+  return res.json().then(r => r.reply);
 }
+
+async function callImageAPI(prompt) {
+  const res = await fetch('http://localhost:4000/api/image', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ prompt })
+  });
+  return res.json().then(r => r.imageUrl);
+}
+
+async function callModelAPI(imageUrl) {
+  const res = await fetch('http://localhost:4000/api/model', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ imageUrl })
+  });
+  return res.json().then(r => r.model);
+}
+
+// Then update handlers:
+
+// Chat
+document.getElementById('chat-send').addEventListener('click', async () => {
+  /* ... */
+  const botReply = await callChatAPI(userMsg);
+  /* ... */
+});
+
+// Image
+document.getElementById('art-generate').addEventListener('click', async () => {
+  /* ... */
+  const imageUrl = await callImageAPI(prompt);
+  /* ... */
+});
+
+// Blender Helper
+document.getElementById('blender-generate').addEventListener('click', async () => {
+  /* ... */
+  const modelData = await callModelAPI(imgUrl);
+  // Initialize Three.js or GLTFLoader here:
+  loadGLTFModel(modelData.gltf_url || modelData[0]);
+});
