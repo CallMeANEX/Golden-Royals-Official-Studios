@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Golden Royals Studio</title>
+  <meta name="description" content="Golden Royals Studio — AI chat, image lab, game coder, and Blender helper in your browser." />
+
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Icons -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    html, body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    /* Simple glass card */
+    .card { background: rgba(255,255,255,0.85); backdrop-filter: blur(8px); }
+    .hidden-el { display: none; }
+  </style>
+
+  <!-- JSZip for downloads -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+
+  <!-- three.js + OBJExporter for Blender Helper -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/exporters/OBJExporter.js"></script>
+
+  <!-- WebLLM (LLM in the browser with WebGPU) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.60/dist/web-llm.min.js"></script>
+
+  <!-- We’ll dynamically import Transformers.js in a module script below -->
+</head>
+<body class="min-h-screen bg-gradient-to-br from-yellow-50 via-white to-amber-50 text-gray-900">
+
+  <!-- Top Bar -->
+  <header class="w-full border-b border-amber-200 bg-white/70 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+      <img id="sitePfp" src="" alt="PFP" class="w-10 h-10 rounded-full ring-2 ring-amber-300 object-cover" />
+      <div class="flex-1">
+        <h1 class="text-xl font-bold">Golden Royals Studio</h1>
+        <p class="text-xs text-gray-500">Free, browser-based AI tools — no servers, no fees.</p>
+      </div>
+      <label class="text-sm cursor-pointer px-3 py-1 rounded-xl bg-amber-100 hover:bg-amber-200">
+        Change PFP<input id="pfpInput" type="file" accept="image/*" class="hidden" />
+      </label>
+      <button id="logoutBtn" class="ml-2 text-sm px-3 py-1 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200">Lock</button>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    <!-- Tabs -->
+    <div class="flex flex-wrap gap-2 mb-6">
+      <button data-tab="chat" class="tab-btn px-4 py-2 rounded-2xl bg-amber-200">AI Chatbox</button>
+      <button data-tab="image" class="tab-btn px-4 py-2 rounded-2xl bg-amber-100">Image & Art Lab</button>
+      <button data-tab="game" class="tab-btn px-4 py-2 rounded-2xl bg-amber-100">Game Coder</button>
+      <button data-tab="blender" class="tab-btn px-4 py-2 rounded-2xl bg-amber-100">Blender Helper</button>
+      <button data-tab="about" class="tab-btn px-4 py-2 rounded-2xl bg-amber-100">About & Settings</button>
+    </div>
+
+    <!-- Panels -->
+    <section id="panel-chat" class="card rounded-3xl p-4 shadow">
+      <h2 class="text-lg font-semibold mb-2">AI Chatbox (local LLM)</h2>
+      <p class="text-sm text-gray-600 mb-3">Runs on your device using WebGPU via WebLLM. Precision sliders tune the outputs.</p>
+
+      <div class="grid md:grid-cols-4 gap-3 mb-3">
+        <div class="col-span-3">
+          <textarea id="chatInput" class="w-full h-28 p-3 border rounded-2xl" placeholder="Ask anything... e.g., 'Design a Unity C# script for player movement with double jump'"></textarea>
+        </div>
+        <div class="col-span-1 space-y-2">
+          <label class="block text-sm">Temperature
+            <input id="temp" type="range" min="0" max="2" step="0.1" value="0.7" class="w-full">
+          </label>
+          <label class="block text-sm">Max Tokens
+            <input id="maxtokens" type="number" min="256" max="8192" value="1024" class="w-full border rounded-xl px-2 py-1">
+          </label>
+          <button id="sendChat" class="w-full mt-2 px-3 py-2 rounded-2xl bg-amber-500 text-white hover:bg-amber-600">Send</button>
+        </div>
+      </div>
+
+      <div id="chatLog" class="space-y-3 max-h-[50vh] overflow-auto p-2 bg-white rounded-2xl border"></div>
+    </section>
+
+    <section id="panel-image" class="card rounded-3xl p-4 shadow hidden-el">
+      <h2 class="text-lg font-semibold mb-2">Image & Art Lab (in-browser Stable Diffusion Turbo)</h2>
+      <p class="text-sm text-gray-600">No servers or keys. Requires a modern GPU + WebGPU. If unavailable, you’ll see a notice.</p>
+      <div id="imageWarning" class="text-red-600 text-sm mb-3 hidden-el"></div>
+
+      <div class="grid md:grid-cols-4 gap-3 mb-3">
+        <div class="col-span-3 space-y-2">
+          <input id="imgPrompt" class="w-full p-3 border rounded-2xl" placeholder="e.g., 'golden royal crest, intricate filigree, 3D render, studio lighting'" />
+          <div class="grid grid-cols-2 gap-2">
+            <label class="text-sm">Steps
+              <input id="imgSteps" type="number" min="1" max="8" value="2" class="w-full border rounded-xl px-2 py-1">
+            </label>
+            <label class="text-sm">Guidance
+              <input id="imgGuidance" type="number" min="0" max="10" step="0.1" value="1.5" class="w-full border rounded-xl px-2 py-1">
+            </label>
+          </div>
+        </div>
+        <div class="col-span-1">
+          <button id="runTxt2Img" class="w-full px-3 py-2 rounded-2xl bg-amber-500 text-white hover:bg-amber-600 mt-7">Generate</button>
+        </div>
+      </div>
+
+      <canvas id="imageCanvas" class="w-full border rounded-2xl"></canvas>
+      <div class="mt-2">
+        <button id="downloadImg" class="px-3 py-2 rounded-2xl bg-amber-100 hover:bg-amber-200 border">Download PNG</button>
+      </div>
+    </section>
+
+    <section id="panel-game" class="card rounded-3xl p-4 shadow hidden-el">
+      <h2 class="text-lg font-semibold mb-2">Game Coder (Unity-focused code generator)</h2>
+      <p class="text-sm text-gray-600">Generates complete code files and zips them for download. Use in Unity by placing files in the indicated folders.</p>
+
+      <textarea id="gameSpec" class="w-full h-28 p-3 border rounded-2xl mb-3" placeholder="Describe your game system. Example: 'First-person controller with sprint, crouch, head-bob, and input via the new Input System; enemy AI patrolling; ScriptableObject items; URP compatible shaders.'"></textarea>
+      <div class="flex gap-2">
+        <button id="genGameCode" class="px-4 py-2 rounded-2xl bg-amber-500 text-white hover:bg-amber-600">Generate Code</button>
+        <button id="downloadZip" class="px-4 py-2 rounded-2xl bg-amber-100 hover:bg-amber-200 border" disabled>Download ZIP</button>
+      </div>
+      <pre id="gameOutput" class="mt-3 p-3 bg-white border rounded-2xl max-h-[45vh] overflow-auto text-xs"></pre>
+    </section>
+
+    <section id="panel-blender" class="card rounded-3xl p-4 shadow hidden-el">
+      <h2 class="text-lg font-semibold mb-2">Blender Helper (image → quick mesh)</h2>
+      <p class="text-sm text-gray-600">Uploads an image, converts to a heightmap, builds a mesh in the browser, and lets you export **.obj**. In Blender, you can refine, retopo, and texture.</p>
+
+      <div class="flex items-center gap-3 mb-3">
+        <input id="heightImg" type="file" accept="image/*" class="border rounded-2xl px-3 py-2" />
+        <label class="text-sm">Mesh Size
+          <input id="meshSize" type="number" min="64" max="512" value="128" class="border rounded-xl px-2 py-1">
+        </label>
+        <label class="text-sm">Height Scale
+          <input id="heightScale" type="number" min="1" max="100" value="20" class="border rounded-xl px-2 py-1">
+        </label>
+        <button id="buildMesh" class="px-4 py-2 rounded-2xl bg-amber-500 text-white hover:bg-amber-600">Build Mesh</button>
+        <button id="exportObj" class="px-4 py-2 rounded-2xl bg-amber-100 hover:bg-amber-200 border" disabled>Export .OBJ</button>
+      </div>
+      <div id="threeContainer" class="w-full h-[420px] bg-white border rounded-2xl"></div>
+    </section>
+
+    <section id="panel-about" class="card rounded-3xl p-4 shadow hidden-el">
+      <h2 class="text-lg font-semibold mb-2">About & Settings</h2>
+      <ul class="list-disc pl-6 text-sm text-gray-700 space-y-2">
+        <li>This site is **free forever** on GitHub Pages; it runs AI **in your browser** (WebGPU), so no server costs.</li>
+        <li>For heavier tasks, use a desktop with a modern GPU. Mobile may fall back or run slowly.</li>
+        <li>Password gate is client-side only (casual privacy). For stronger auth, you’d need a backend (not free on Pages).</li>
+        <li>PFP and settings are stored locally in your browser (LocalStorage). They don’t sync across devices.</li>
+      </ul>
+      <div class="mt-4">
+        <label class="text-sm">Change Password (local gate):
+          <input id="newPass" type="password" class="border rounded-xl px-3 py-1 ml-2">
+        </label>
+        <button id="savePass" class="ml-2 px-3 py-1 rounded-xl bg-amber-100 hover:bg-amber-200 border">Save</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Password Gate Modal -->
+  <div id="lockscreen" class="fixed inset-0 bg-black/40 backdrop-blur flex items-center justify-center">
+    <div class="card rounded-3xl p-6 w-full max-w-md shadow-2xl">
+      <h3 class="text-xl font-bold mb-1">Golden Royals Studio</h3>
+      <p class="text-sm text-gray-600 mb-4">Enter password to continue.</p>
+      <input id="passInput" type="password" class="w-full border rounded-2xl px-3 py-2 mb-3" placeholder="Password" />
+      <button id="unlockBtn" class="w-full px-3 py-2 rounded-2xl bg-amber-500 text-white hover:bg-amber-600">Unlock</button>
+      <p id="passMsg" class="text-sm text-red-600 mt-3"></p>
+    </div>
+  </div>
+
+  <!-- --- Scripts --- -->
+  <script type="module">
+    // ====== Utilities ======
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
+
+    // Local storage keys
+    const LS = {
+      PASS_HASH: 'grs_pass_hash',
+      PFP: 'grs_pfp',
+    };
+
+    // Default password (change this!): "GoldenPass#2025"
+    const DEFAULT_PASS = "GoldenPass#2025";
+
+    async function sha256Hex(str) {
+      const data = new TextEncoder().encode(str);
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+    }
+
+    async function ensurePassHash() {
+      if (!localStorage.getItem(LS.PASS_HASH)) {
+        localStorage.setItem(LS.PASS_HASH, await sha256Hex(DEFAULT_PASS));
+      }
+    }
+
+    // ====== Password Gate ======
+    const lockscreen = $('#lockscreen');
+    const passInput = $('#passInput');
+    const unlockBtn = $('#unlockBtn');
+    const passMsg = $('#passMsg');
+    const logoutBtn = $('#logoutBtn');
+    const savePassBtn = $('#savePass');
+    const newPassInput = $('#newPass');
+
+    await ensurePassHash();
+
+    async function tryUnlock() {
+      const h = await sha256Hex(passInput.value || '');
+      if (h === localStorage.getItem(LS.PASS_HASH)) {
+        lockscreen.style.display = 'none';
+        passMsg.textContent = '';
+        passInput.value = '';
+      } else {
+        passMsg.textContent = 'Incorrect password.';
+      }
+    }
+    unlockBtn.addEventListener('click', tryUnlock);
+    passInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
+    logoutBtn.addEventListener('click', () => { lockscreen.style.display = 'flex'; });
+
+    savePassBtn.addEventListener('click', async () => {
+      if (!newPassInput.value) return;
+      localStorage.setItem(LS.PASS_HASH, await sha256Hex(newPassInput.value));
+      newPassInput.value = '';
+      alert('Password updated (saved in this browser).');
+    });
+
+    // ====== Tabs ======
+    const tabs = $$('.tab-btn');
+    const panels = {
+      chat: $('#panel-chat'),
+      image: $('#panel-image'),
+      game: $('#panel-game'),
+      blender: $('#panel-blender'),
+      about: $('#panel-about')
+    };
+    tabs.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tabs.forEach(b => b.classList.remove('bg-amber-200'));
+        btn.classList.add('bg-amber-200');
+        Object.values(panels).forEach(p => p.classList.add('hidden-el'));
+        panels[btn.dataset.tab].classList.remove('hidden-el');
+      });
+    });
+
+    // ====== PFP ======
+    const pfpImg = $('#sitePfp');
+    const pfpInput = $('#pfpInput');
+    function loadPfp() {
+      const p = localStorage.getItem(LS.PFP);
+      pfpImg.src = p ? p : 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/crown.svg';
+      pfpImg.style.background = p ? '' : '#fff';
+      pfpImg.style.padding = p ? '' : '6px';
+    }
+    loadPfp();
+    pfpInput.addEventListener('change', () => {
+      const f = pfpInput.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        localStorage.setItem(LS.PFP, reader.result);
+        loadPfp();
+      };
+      reader.readAsDataURL(f);
+    });
+
+    // ====== WebLLM Setup (Chat) ======
+    const chatLog = $('#chatLog');
+    const chatInput = $('#chatInput');
+    const sendChat = $('#sendChat');
+    const temp = $('#temp');
+    const maxtokens = $('#maxtokens');
+
+    // Model choices (smaller -> faster). Using an open small instruct model for demo.
+    const chatInitMsg = document.createElement('div');
+    chatInitMsg.className = 'text-sm text-gray-600 mb-2';
+    chatInitMsg.textContent = 'Loading local chat model… first load will download weights (hundreds of MB).';
+    chatLog.appendChild(chatInitMsg);
+
+    const chatEngine = new webllm.ChatModule();
+    // Pick a small default for broader compatibility.
+    // You can try: "Llama-3-8B-Instruct-q4f32_1-MLC"
+    const modelName = "Phi-3-mini-4k-instruct-q4f32_1-MLC";
+
+    await chatEngine.reload(modelName, { temperature: parseFloat(temp.value) });
+
+    chatInitMsg.textContent = 'Model ready.';
+
+    function appendMsg(role, text) {
+      const div = document.createElement('div');
+      div.className = role === 'user'
+        ? 'p-3 bg-amber-50 border border-amber-200 rounded-2xl'
+        : 'p-3 bg-white border rounded-2xl';
+      div.innerText = (role === 'user' ? 'You: ' : 'Golden Royals: ') + text;
+      chatLog.appendChild(div);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    sendChat.addEventListener('click', async () => {
+      const prompt = chatInput.value.trim();
+      if (!prompt) return;
+      appendMsg('user', prompt);
+      chatInput.value = '';
+
+      const genCfg = {
+        temperature: parseFloat(temp.value),
+        max_tokens: parseInt(maxtokens.value, 10)
+      };
+
+      const sysPrompt = `You are Golden Royals Studio's assistant. Be precise and produce high-quality, copy-pastable code when asked.`;
+      const messages = [
+        { role: 'system', content: sysPrompt },
+        { role: 'user', content: prompt }
+      ];
+
+      const reply = await chatEngine.chat.completions.create({
+        messages,
+        stream: true,
+        ...genCfg
+      });
+
+      let botText = '';
+      for await (const chunk of reply) {
+        const delta = chunk.choices?.[0]?.delta?.content || '';
+        botText += delta;
+      }
+      appendMsg('assistant', botText);
+    });
+
+    // ====== Image & Art Lab (Transformers.js) ======
+    const imageWarning = $('#imageWarning');
+    const runTxt2ImgBtn = $('#runTxt2Img');
+    const imgPrompt = $('#imgPrompt');
+    const imgSteps = $('#imgSteps');
+    const imgGuidance = $('#imgGuidance');
+    const imageCanvas = /** @type {HTMLCanvasElement} */ ($('#imageCanvas'));
+    const ctx = imageCanvas.getContext('2d');
+
+    function hasWebGPU() {
+      return 'gpu' in navigator;
+    }
+    if (!hasWebGPU()) {
+      imageWarning.classList.remove('hidden-el');
+      imageWarning.textContent = 'WebGPU not detected. Image generation will be disabled on this device.';
+      runTxt2ImgBtn.disabled = true;
+    }
+
+    let pipe = null;
+    let transformers = null;
+
+    async function ensureImagePipeline() {
+      if (!hasWebGPU()) return;
+      if (pipe) return;
+      transformers = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@3.0.0');
+      // Load a light, fast text-to-image pipeline (SD Turbo or similar).
+      pipe = await transformers.pipeline('text-to-image', 'Xenova/stable-diffusion-turbo', {
+        dtype: 'q8',
+        device: 'webgpu'
+      });
+    }
+
+    runTxt2ImgBtn.addEventListener('click', async () => {
+      if (!hasWebGPU()) return;
+      const prompt = imgPrompt.value.trim();
+      if (!prompt) return alert('Enter a prompt.');
+      runTxt2ImgBtn.disabled = true;
+      runTxt2ImgBtn.textContent = 'Generating… (first time may take a bit)';
+      try {
+        await ensureImagePipeline();
+        const steps = parseInt(imgSteps.value, 10);
+        const guidance = parseFloat(imgGuidance.value);
+
+        const result = await pipe(prompt, { num_inference_steps: steps, guidance_scale: guidance, height: 512, width: 512 });
+        const bitmap = await createImageBitmap(result[0]);
+        imageCanvas.width = bitmap.width;
+        imageCanvas.height = bitmap.height;
+        ctx.drawImage(bitmap, 0, 0);
+      } catch (e) {
+        console.error(e);
+        alert('Could not generate image on this device. A desktop with WebGPU is recommended.');
+      } finally {
+        runTxt2ImgBtn.disabled = false;
+        runTxt2ImgBtn.textContent = 'Generate';
+      }
+    });
+
+    $('#downloadImg').addEventListener('click', () => {
+      imageCanvas.toBlob((blob) => {
+        if (!blob) return;
+        saveAs(blob, 'golden_royals_art.png');
+      });
+    });
+
+    // ====== Game Coder (uses chat model) ======
+    const gameSpec = $('#gameSpec');
+    const genGameCodeBtn = $('#genGameCode');
+    const gameOutput = $('#gameOutput');
+    const downloadZipBtn = $('#downloadZip');
+
+    let lastFiles = null;
+
+    function scaffoldUnityProject(filesMap) {
+      // Visualize in the output and enable zip download
+      gameOutput.textContent = '';
+      for (const [path, content] of Object.entries(filesMap)) {
+        gameOutput.textContent += `--- ${path} ---\n${content}\n\n`;
+      }
+      lastFiles = filesMap;
+      downloadZipBtn.disabled = false;
+    }
+
+    genGameCodeBtn.addEventListener('click', async () => {
+      const spec = gameSpec.value.trim();
+      if (!spec) return alert('Describe what to build.');
+      downloadZipBtn.disabled = true;
+      gameOutput.textContent = 'Generating…';
+
+      const sys = `You generate complete, minimal Unity game code with clear folder paths.
+Output multiple files as a JSON object where keys are file paths (e.g., "Assets/Scripts/Player/PlayerController.cs") and values are full file contents. 
+Use C# for Unity scripts. Include necessary namespaces. Do not include explanations, only JSON.`;
+
+      const messages = [
+        { role: 'system', content: sys },
+        { role: 'user', content: `Build this Unity feature:\n${spec}\nRemember: reply ONLY with JSON object of file paths -> file contents.` }
+      ];
+
+      const reply = await chatEngine.chat.completions.create({ messages, stream: false, temperature: 0.3, max_tokens: 4096 });
+      let text = reply.choices?.[0]?.message?.content || '{}';
+
+      // Try to parse JSON (strip code fences if present)
+      text = text.trim();
+      if (text.startsWith('```')) {
+        text = text.replace(/^```json/i, '').replace(/```$/i, '').trim();
+      }
+      let files = {};
+      try {
+        files = JSON.parse(text);
+      } catch (e) {
+        // Fallback: put into one file
+        files = { "Assets/Generated/README.txt": text };
+      }
+      scaffoldUnityProject(files);
+    });
+
+    downloadZipBtn.addEventListener('click', async () => {
+      if (!lastFiles) return;
+      const zip = new JSZip();
+      for (const [path, content] of Object.entries(lastFiles)) {
+        zip.file(path, content);
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      saveAs(blob, 'GoldenRoyals_UnityCode.zip');
+    });
+
+    // ====== Blender Helper (image -> heightmesh) ======
+    const heightImg = $('#heightImg');
+    const meshSize = $('#meshSize');
+    const heightScale = $('#heightScale');
+    const buildMeshBtn = $('#buildMesh');
+    const exportObjBtn = $('#exportObj');
+    const threeContainer = $('#threeContainer');
+
+    let scene, camera, renderer, mesh;
+
+    function initThree() {
+      if (renderer) return;
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(threeContainer.clientWidth, threeContainer.clientHeight);
+      threeContainer.appendChild(renderer.domElement);
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xffffff);
+      camera = new THREE.PerspectiveCamera(45, threeContainer.clientWidth / threeContainer.clientHeight, 0.1, 1000);
+      camera.position.set(0, 60, 120);
+
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(50, 100, 50);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+      const grid = new THREE.GridHelper(200, 20, 0x888888, 0xdddddd);
+      scene.add(grid);
+
+      function animate() {
+        requestAnimationFrame(animate);
+        if (mesh) mesh.rotation.y += 0.002;
+        renderer.render(scene, camera);
+      }
+      animate();
+      window.addEventListener('resize', () => {
+        renderer.setSize(threeContainer.clientWidth, threeContainer.clientHeight);
+        camera.aspect = threeContainer.clientWidth / threeContainer.clientHeight;
+        camera.updateProjectionMatrix();
+      });
+    }
+
+    function imageToHeightMap(img, size) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const cctx = c.getContext('2d');
+      cctx.drawImage(img, 0, 0, size, size);
+      const { data } = cctx.getImageData(0, 0, size, size);
+      const heights = new Float32Array(size * size);
+      for (let i = 0; i < size * size; i++) {
+        const r = data[i*4], g = data[i*4+1], b = data[i*4+2];
+        heights[i] = (0.299*r + 0.587*g + 0.114*b) / 255; // luminance
+      }
+      return heights;
+    }
+
+    function buildHeightMesh(heights, size, scale) {
+      const geo = new THREE.PlaneGeometry(100, 100, size - 1, size - 1);
+      // Plane is X,Y in geometry, but we want X,Z -> rotate later
+      for (let i = 0; i < geo.attributes.position.count; i++) {
+        const h = heights[i] * scale;
+        geo.attributes.position.setY(i, h);
+      }
+      geo.computeVertexNormals();
+      const mat = new THREE.MeshStandardMaterial({ color: 0xCCAA44, flatShading: false, metalness: 0.2, roughness: 0.7, side: THREE.DoubleSide });
+      const m = new THREE.Mesh(geo, mat);
+      m.rotation.x = -Math.PI / 2; // make it horizontal
+      return m;
+    }
+
+    buildMeshBtn.addEventListener('click', () => {
+      const f = heightImg.files?.[0];
+      if (!f) return alert('Choose an image first.');
+      const size = Math.max(64, Math.min(512, parseInt(meshSize.value, 10)));
+      const scale = Math.max(1, Math.min(200, parseInt(heightScale.value, 10)));
+
+      const img = new Image();
+      img.onload = () => {
+        initThree();
+        const heights = imageToHeightMap(img, size);
+        if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
+        mesh = buildHeightMesh(heights, size, scale);
+        scene.add(mesh);
+        exportObjBtn.disabled = false;
+      };
+      img.src = URL.createObjectURL(f);
+    });
+
+    exportObjBtn.addEventListener('click', () => {
+      if (!mesh) return;
+      const exporter = new THREE.OBJExporter();
+      const obj = exporter.parse(mesh);
+      const blob = new Blob([obj], { type: 'text/plain' });
+      saveAs(blob, 'golden_royals_mesh.obj');
+    });
+  </script>
+</body>
+</html>
