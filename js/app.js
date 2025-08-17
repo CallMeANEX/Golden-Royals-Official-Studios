@@ -110,3 +110,29 @@ document.getElementById('blender-generate').addEventListener('click', async () =
   // Initialize Three.js or GLTFLoader here:
   loadGLTFModel(modelData.gltf_url || modelData[0]);
 });
+
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+function loadGLTFModel(url) {
+  const canvasContainer = document.getElementById('model-canvas');
+  canvasContainer.innerHTML = ''; // clear placeholder
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+  canvasContainer.appendChild(renderer.domElement);
+
+  const loader = new GLTFLoader();
+  loader.load(url, gltf => {
+    scene.add(gltf.scene);
+    camera.position.z = 2;
+    const animate = () => {
+      requestAnimationFrame(animate);
+      gltf.scene.rotation.y += 0.005;
+      renderer.render(scene, camera);
+    };
+    animate();
+  });
+}
